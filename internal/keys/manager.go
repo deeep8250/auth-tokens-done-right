@@ -41,10 +41,10 @@ func (m *Manager) Private() *rsa.PrivateKey {
 }
 
 // Public returns the PUBLIC key (for verifying).
-func (m *Manager) Public() rsa.PublicKey {
+func (m *Manager) Public() *rsa.PublicKey {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.pub
+	return &m.pub
 }
 
 // JWKS returns the public key in JWKS (JSON Web Key Set) format.

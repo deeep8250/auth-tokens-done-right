@@ -9,71 +9,50 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 )
 
-// JWT Authentication middleware
-func AuthMiddleware() gin.HandlerFunc {
+func AuthMiddleware(keyManager *keys.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Extract the token from the Authorization header
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization header is missing",
-			})
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header"})
 			c.Abort()
 			return
 		}
 
-		// Expect format "Bearer <token>"
-		tokenString := strings.Split(authHeader, " ")[1]
-		if tokenString == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Bearer token is missing",
-			})
-			c.Abort()
-			return
-		}
+		// Only the token string (without "Bearer ")
+		tokenString := strings.TrimSpace(parts[1])
 
-		// Retrieve the public key from the Manager (assuming keys.New() gives us the key pair)
-		keyManager, err := keys.New()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Could not load public key",
-			})
-			c.Abort()
-			return
-		}
-
-		// Parse the JWT token and verify it using the public key
 		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
-			// Validate the token's signing method (RS256)
 			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, jwt.NewValidationError("Invalid signing method", jwt.ValidationErrorSignatureInvalid)
+				return nil, jwt.NewValidationError("invalid signing method", jwt.ValidationErrorSignatureInvalid)
 			}
-			// Return the public key for verification
-			return keyManager.Public(), nil
+			return keyManager.Public(), nil // same public key used for signing
 		})
 
 		if err != nil || !token.Valid {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid or expired token",
-			})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			c.Abort()
 			return
 		}
 
-		// Successfully validated the JWT, now extract claims
-		claims, ok := token.Claims.(*jwt.RegisteredClaims)
+		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid claims in token",
-			})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid claims"})
 			c.Abort()
 			return
 		}
 
-		// Extract email or any other information from the claims and set it in context
-		c.Set("email", claims.Subject)
+		// Extract email
+		email, ok := claims["email"].(string)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "email claim missing"})
+			c.Abort()
+			return
+		}
 
-		// Continue to the next handler
+		c.Set("email", email)
 		c.Next()
+
 	}
+
 }
