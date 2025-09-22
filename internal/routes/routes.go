@@ -4,6 +4,7 @@ import (
 	"authsvc/internal/handlers"
 	"authsvc/internal/keys"
 	"authsvc/internal/middleware"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,4 +20,8 @@ func Routes(r *gin.Engine, keyManager *keys.Manager) {
 	{
 		protected.GET("/profile", handlers.Profile)
 	}
+	r.GET("/.well-known/jwks.json", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/json", keyManager.JWKS())
+	})
+
 }
