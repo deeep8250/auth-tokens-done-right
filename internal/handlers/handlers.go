@@ -7,9 +7,12 @@ import (
 	"authsvc/internal/models"
 	"authsvc/internal/tokens"
 	"authsvc/internal/users"
+	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -105,6 +108,7 @@ func Login(key *keys.Manager) gin.HandlerFunc {
 		}
 
 		err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(login.Password))
+
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"err": err.Error(),
@@ -176,6 +180,10 @@ func Profile(c *gin.Context) {
 	})
 
 }
+
+//This handler is called from frontend whenever the access token is expired that time frontent detect the error  402
+// and in that time frontend call this handler and generate a new access token after that
+// it generate a new refresh token and replaced that in place of old refresh token in redis
 
 func Refresh(c *gin.Context, keys *keys.Manager) {
 
@@ -256,4 +264,91 @@ func Refresh(c *gin.Context, keys *keys.Manager) {
 		"access token":  accessToken,
 	})
 
+}
+
+func RequestReset(c *gin.Context) {
+
+	email, ok := c.Get("email")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "Unauthorized User",
+		})
+		return
+	}
+
+	var user models.User
+	verify := db.DB.Model(models.User{}).Where("email=?", email).First(&user)
+	if verify.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "db error",
+		})
+		return
+	}
+	if verify.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": " user not found",
+		})
+		return
+	}
+
+	AccessToken := c.GetHeader("Authorization")
+	if AccessToken == "" {
+		c.JSON(401, gin.H{
+			"error": "authorization header is missing",
+		})
+		return
+	}
+	ctx := context.Background()
+	Key := fmt.Sprintf("reset:%s", user.Email)
+	err := redis.RDB.Set(ctx, Key, AccessToken, 15*time.Minute).Err()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "redis error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"response": "reset request is accepted validity is 5 min",
+	})
+
+}
+
+func VerifyReset(c *gin.Context) {
+	var body struct {
+		Email       string `json:"email"`
+		Token       string `json:"token"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	ctx := context.Background()
+	key := fmt.Sprintf("reset:%s", body.Email)
+	storedToken, err := redis.RDB.Get(ctx, key).Result()
+	if err == redis.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error1": err.Error()})
+		return
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error2": err.Error()})
+		return
+	}
+
+	Token := "Bearer " + body.Token
+
+	if storedToken != Token {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": storedToken})
+		return
+	}
+
+	// ✅ Update password in DB (hash it before saving!)
+	hashed, _ := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
+	db.DB.Model(&models.User{}).Where("email = ?", body.Email).Update("password", string(hashed))
+
+	// Delete reset token after use
+	redis.RDB.Del(ctx, key)
+
+	c.JSON(http.StatusOK, gin.H{"response": "password successfully updated"})
 }
