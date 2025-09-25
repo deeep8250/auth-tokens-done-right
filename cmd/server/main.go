@@ -24,7 +24,7 @@ func main() {
 	}
 
 	if err := godotenv.Load(); err != nil {
-		log.Println(err.Error())
+		log.Println("⚠️ No .env file found, relying on environment variables")
 	}
 
 	db.DBInit()
